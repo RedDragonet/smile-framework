@@ -6,6 +6,7 @@ namespace Smile;
 
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
+use Smile\Common\Pipeline;
 use Smile\Di\Container;
 use Smile\Di\ElementDefinition;
 use Smile\Interfaces\ContainerInterface;
@@ -86,10 +87,17 @@ class Application
 
         $route = $router->resolve($request->getMethod(), $request->getUri()->getPath());
 
+
+
         /** @var DispatcherInterface $dispatcher */
         $dispatcher = $this->container->getByAlias('dispatcher');
 
-        $callable = $dispatcher->dispatch($route, $request);
+        $callable = (new Pipeline())->send($request)->through($route->getMiddle())->then(
+            function ($request) use($dispatcher,$route){
+                return $dispatcher->dispatch($route, $request);
+            }
+        );
+
 
         $newResponse = call_user_func($callable, $request, $response);
 

@@ -57,6 +57,11 @@ class Route
     private $target;
 
     /**
+     * @var array
+     */
+    private $middleWares = [];
+
+    /**
      * 获取是否设置了名称
      *
      * @return bool
@@ -156,6 +161,24 @@ class Route
     {
         $this->target = $target;
         return $this;
+    }
+
+    /**
+     * 设置中间件
+     * @param $middle
+     * @return $this
+     */
+    public function middle($middle){
+        $this->middleWares = (array)$middle;
+        return $this;
+    }
+
+    /**
+     * 获取中间件
+     * @return array
+     */
+    public function getMiddle(){
+        return $this->middleWares;
     }
 
     /**

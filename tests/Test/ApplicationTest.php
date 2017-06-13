@@ -12,6 +12,8 @@ use Smile\Common\Environment;
 use Smile\Controller\BaseController;
 use Smile\Interfaces\ContainerInterface;
 use Smile\Interfaces\RouterInterface;
+use Smile\Middleware\First;
+use Smile\Middleware\Second;
 use Smile\Router\Route;
 
 class ApplicationTest extends TestCase
@@ -28,6 +30,7 @@ class ApplicationTest extends TestCase
                         (new Route)
                             ->put('/{a}[/{b}[/{c}]]')
                             ->setTarget(TestController::class)
+                            ->middle(First::class)
                     );
                 }
             ],
@@ -40,6 +43,7 @@ class ApplicationTest extends TestCase
                         (new Route)
                             ->put('/{a}[/{b}[/{c}]]')
                             ->setTarget([AnotherTestController::class, 'hello'])
+                            ->middle([First::class,Second::class])
                     );
                 }
             ]
