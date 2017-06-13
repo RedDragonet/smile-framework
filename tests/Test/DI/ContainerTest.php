@@ -6,10 +6,14 @@ namespace Smile\Test\DI;
 use PHPUnit\Framework\TestCase;
 use Smile\DI\Container;
 use Smile\DI\ElementDefinition;
-use Smile\Interfaces\ContainerInterface;
+use Psr\Container\ContainerInterface;
 
 /**
  * Class DefaultContainerImplTest
+ * @fixme 修改ContainerInterface 为 psr-11 ContainerInterface
+ * @fixme 修改以$开头的别名 才是BaseType类型的别名
+ * @fixme 原先的单元测试全部通过
+ * @fixme 新增:构造函数支持默认值
  * @package Smile\Test\DI
  */
 class ContainerTest extends TestCase
@@ -71,7 +75,7 @@ class ContainerTest extends TestCase
      * @dataProvider containerProvider
      * @param ContainerInterface $container
      */
-    public function testDeferredInit(\Smile\Interfaces\ContainerInterface $container)
+    public function testDeferredInit(ContainerInterface $container)
     {
         $container->set(
             (new ElementDefinition())
@@ -109,7 +113,7 @@ class ContainerTest extends TestCase
      * @dataProvider containerProvider
      * @param \Smile\Interfaces\ContainerInterface $container
      */
-    public function testSingleton(\Smile\Interfaces\ContainerInterface $container)
+    public function testSingleton(ContainerInterface $container)
     {
         $container->set(
             (new ElementDefinition())
@@ -130,7 +134,7 @@ class ContainerTest extends TestCase
      * @dataProvider containerProvider
      * @param ContainerInterface $container
      */
-    public function testCircleDep(\Smile\Interfaces\ContainerInterface $container)
+    public function testCircleDep(ContainerInterface $container)
     {
         $this->expectException(\Smile\Exceptions\ContainerException::class);
         $this->expectExceptionMessageRegExp('/循环/');
@@ -140,11 +144,11 @@ class ContainerTest extends TestCase
 
     /**
      * 测试别名
-     *
+     * @fixme 别名修改新增$开头
      * @dataProvider containerProvider
      * @param ContainerInterface $container
      */
-    public function testAlias(\Smile\Interfaces\ContainerInterface $container)
+    public function testAlias(ContainerInterface $container)
     {
         $container->set(
             (new ElementDefinition())
@@ -159,7 +163,7 @@ class ContainerTest extends TestCase
             (new ElementDefinition())
             ->setType(ElementDefinition::TYPE_STRING)
             ->setInstance('hello, world')
-            ->setAlias('hello')
+            ->setAlias('$hello')
         );
 
         $container->set(
@@ -168,7 +172,7 @@ class ContainerTest extends TestCase
             ->setBuilder(function ($hello) {
                 return strlen($hello);
             })
-            ->setAlias('helloCharCount')
+            ->setAlias('$helloCharCount')
         );
 
         $arrayResult = $container->getByAlias('helloWorldAndItsLength');
@@ -179,7 +183,7 @@ class ContainerTest extends TestCase
 
 class TestClassA
 {
-    public function __construct(TestClassC $b)
+    public function __construct(TestClassC $b,$c="默认值支持")
     {
     }
 }

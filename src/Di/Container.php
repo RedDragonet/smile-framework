@@ -3,16 +3,16 @@
 
 namespace Smile\Di;
 
+use Psr\Container\ContainerInterface;
 use ReflectionClass;
 use ReflectionFunction;
 use ReflectionMethod;
 use Smile\Exceptions\ContainerException;
-use Smile\Interfaces\ContainerInterface;
 
 
 /**
  * 依赖注入容器接口的默认实现, 可以运用在大部分的场景下
- *
+ * @fixme 新增支持psr-11规范
  * @package Smile\Di
  */
 class Container implements ContainerInterface
@@ -42,6 +42,13 @@ class Container implements ContainerInterface
      */
     private $autowiredNamespaces = [];
 
+
+    /**
+     * 创建对象依赖栈
+     * @var array
+     */
+    private $buildStack = [];
+
     /**
      * 给容器设置一个元素
      *
@@ -62,13 +69,14 @@ class Container implements ContainerInterface
             $this->initializeBuilder($definition);
         }
 
-        if (!$definition->isBaseType()) {
-            //保存到map中
-            $this->definitionTypeMap[$definition->getType()] = $definition;
-        } else {
-            //如果是基本类型, 校验基本类型的合法性
-            $this->assertBaseType($definition);
-        }
+        $this->definitionTypeMap[$definition->getType()] = $definition;
+//        if (!$definition->isBaseType()) {
+//            //保存到map中
+//            $this->definitionTypeMap[$definition->getType()] = $definition;
+//        } else {
+//            //如果是基本类型, 校验基本类型的合法性
+//            $this->assertBaseType($definition);
+//        }
 
         $alias = $definition->getAlias();
         if (!empty($alias)) {
@@ -80,26 +88,57 @@ class Container implements ContainerInterface
     }
 
     /**
+     * 获取一个
+     * @param $id
+     * @return mixed
+     */
+    public function get($id){
+        return $this->build($id);
+    }
+
+    /**
+     * @param string $id
+     */
+    public function has($id)
+    {
+        // TODO: Implement has() method.
+    }
+
+    /**
+     * 判断是否存在别名
+     * @param $alias
+     * @param bool $baseType
+     * @return bool
+     */
+    private function hasAlias($alias,$baseType=false){
+        if($baseType){
+            $alias = '$'.$alias;
+        }
+        return isset($this->definitionAliasMap[$alias]);
+    }
+
+    /**
      * 根据类型从容器获得一个元素产生的实例
-     *
+     * @fixme 兼容老代码
      * @param $type
      * @return mixed
      */
     public function getByType($type)
     {
-        return $this->buildByTypeRecursive($type);
+        return $this->get($type);
     }
 
     /**
      * 从容器获得一个元素产生的实例
      *
+     * @fixme 兼容老代码
      * @param string $alias 元素别名
      * @return mixed
      * @throws ContainerException
      */
     public function getByAlias($alias)
     {
-        return $this->buildByAliasRecursive($alias);
+        return $this->get($alias);
     }
 
     /**
@@ -114,6 +153,7 @@ class Container implements ContainerInterface
      * 不过一直到类名被getByType访问之前, 都不会被调用
      *
      * @fixme 严格的讲, 这个不应该属于容器的职责, 大家可以考虑一下如何把这部分逻辑剥离出容器的接口
+     * @fixme 默认允许所有命名空间都可以自动组装
      *
      * @param string $namespace
      * @return mixed
@@ -121,8 +161,79 @@ class Container implements ContainerInterface
      */
     public function enableAutowiredForNamespace($namespace)
     {
-        $this->assertNamespaceAvailable($namespace);
-        $this->autowiredNamespaces[] = $namespace;
+//        $this->assertNamespaceAvailable($namespace);
+//        $this->autowiredNamespaces[] = $namespace;
+    }
+
+
+    /**
+     * 递归的创建实例
+     * @param $type
+     * @return mixed
+     */
+    private function build($type){
+        $definition = null;
+        $this->assertNoCircleDependency($type);
+        $this->buildStack[] = $type;
+
+        $definition = $this->getDefinition($type);
+
+        if ($definition->isSingletonScope() and !$definition->isInstanceNull()) {
+            // 单例并且已经初始化的实例直接返回
+            $result = $definition->getInstance();
+            $this->assertResultType($definition, $result);
+
+            //@fixme 思想来源laravel
+            array_pop($this->buildStack);
+            return $result;
+        }
+        $result = $this->callBuilder($definition);
+        $this->assertResultType($definition, $result);
+        if ($definition->isSingletonScope()) {
+            // 如果是单例, 保存这个实例
+            $definition->setInstance($result);
+        }
+
+        //@fixme 思想来源laravel
+        array_pop($this->buildStack);
+        return $result;
+    }
+
+    /**
+     * 通过type获得定义
+     * @param $type
+     * @return $this|ElementDefinition
+     * @throws ContainerException
+     */
+    private function getDefinition($type){
+        if (isset($this->definitionTypeMap[$type])) {
+            return $this->definitionTypeMap[$type];
+        }
+
+        if (isset($this->definitionAliasMap[$type])) {
+            return $this->definitionAliasMap[$type];
+        }
+
+        //BaseType类型
+        if (isset($this->definitionAliasMap["$".$type])) {
+            $definition = $this->definitionAliasMap["$".$type];
+            if($definition->isBaseType()){
+                return $definition;
+            }
+        }
+
+        //检查类是否可实例化
+        if(class_exists($type,true)){
+            $autoDefinition = (new ElementDefinition())
+                ->setType($type)
+                ->setBuilderToConstructor()
+                ->setPrototypeScope()
+                ->setDeferred();
+            $this->set($autoDefinition);
+            return $autoDefinition;
+        }
+
+        throw new ContainerException(sprintf('找不到别名: %s, 依赖栈: %s', $type, json_encode($this->buildStack)));
     }
 
     /**
@@ -134,40 +245,7 @@ class Container implements ContainerInterface
      * @return mixed
      * @throws ContainerException
      */
-    private function buildByTypeRecursive($type, array $stack = [])
-    {
-        $definition = null;
-        $this->assertNoCircleDependency($type, $stack);
-        $stack[] = $type;
-
-        if (isset($this->definitionTypeMap[$type])) {
-            $definition = $this->definitionTypeMap[$type];
-        } elseif ($this->searchAutowiredNamespace($type)) {
-            $autoDefinition = (new ElementDefinition())
-                ->setType($type)
-                ->setBuilderToConstructor()
-                ->setPrototypeScope()
-                ->setDeferred();
-            $this->set($autoDefinition);
-            $definition = $autoDefinition;
-        } else {
-            throw new ContainerException(sprintf('找不到定义: %s, 依赖栈: %s', $type, json_encode($stack)));
-        }
-
-        if ($definition->isSingletonScope() and !$definition->isInstanceNull()) {
-            // 单例并且已经初始化的实例直接返回
-            $result = $definition->getInstance();
-            $this->assertResultType($definition, $result);
-            return $result;
-        }
-        $result = $this->callBuilder($definition, $stack);
-        $this->assertResultType($definition, $result);
-        if ($definition->isSingletonScope()) {
-            // 如果是单例, 保存这个实例
-            $definition->setInstance($result);
-        }
-        return $result;
-    }
+    private function buildByTypeRecursive($type, array $stack = []){}
 
     /**
      * 递归的创建实例
@@ -178,47 +256,24 @@ class Container implements ContainerInterface
      * @return mixed
      * @throws ContainerException
      */
-    private function buildByAliasRecursive($alias, array $stack = [])
-    {
-        $definition = null;
-        $this->assertNoCircleDependency('$' . $alias, $stack);
-        $stack[] = '$' . $alias;
-
-        if (isset($this->definitionAliasMap[$alias])) {
-            $definition = $this->definitionAliasMap[$alias];
-        } else {
-            throw new ContainerException(sprintf('找不到别名: %s, 依赖栈: %s', $alias, json_encode($stack)));
-        }
-
-        if ($definition->isSingletonScope() and !$definition->isInstanceNull()) {
-            // 单例并且已经初始化的实例直接返回
-            $result = $definition->getInstance();
-            $this->assertResultType($definition, $result);
-            return $result;
-        }
-        $result = $this->callBuilder($definition, $stack);
-        $this->assertResultType($definition, $result);
-        if ($definition->isSingletonScope()) {
-            // 如果是单例, 保存这个实例
-            $definition->setInstance($result);
-        }
-        return $result;
-    }
+//    private function buildByAliasRecursive($alias, array $stack = []){}
 
     /**
      * 搜索是否命中自动组装的命名空间
      *
+     * @fixme 默认允许所有命名空间组装
      * @param string $name 类名
      * @return bool
      */
     private function searchAutowiredNamespace($name)
     {
-        foreach ($this->autowiredNamespaces as $ns) {
-            if (substr_compare($name, $ns, 0, strlen($ns)) === 0) {
-                return true;
-            }
-        }
-        return false;
+//        foreach ($this->autowiredNamespaces as $ns) {
+//            if (substr_compare($name, $ns, 0, strlen($ns)) === 0) {
+//                return true;
+//            }
+//        }
+//        return false;
+        return true;
     }
 
     /**
@@ -248,12 +303,12 @@ class Container implements ContainerInterface
      */
     private function assertAliasAvailable($name)
     {
-        if (!is_string($name)) {
-            throw new ContainerException('不是一个合法的元素别名');
-        }
-        if (array_key_exists($name, $this->definitionAliasMap)) {
-            throw new ContainerException('别名已经存在');
-        }
+//        if (!is_string($name)) {
+//            throw new ContainerException('不是一个合法的元素别名');
+//        }
+//        if (array_key_exists($name, $this->definitionAliasMap)) {
+//            throw new ContainerException('别名已经存在');
+//        }
     }
 
     /**
@@ -317,13 +372,12 @@ class Container implements ContainerInterface
      * 校验没有循环依赖
      *
      * @param $key
-     * @param $stack
      * @throws ContainerException
      */
-    private function assertNoCircleDependency($key, $stack)
+    private function assertNoCircleDependency($key)
     {
-        if (in_array($key, $stack)) {
-            throw new ContainerException(sprintf('存在循环依赖, 依赖栈: %s', json_encode($stack)));
+        if (in_array($key, $this->buildStack)) {
+            throw new ContainerException(sprintf('存在循环依赖, 依赖栈: %s', json_encode($this->buildStack)));
         }
     }
 
@@ -402,11 +456,10 @@ class Container implements ContainerInterface
     /**
      * 调用Builder, 实例化方法
      * @param ElementDefinition $definition
-     * @param array $stack
      * @return mixed
      * @throws ContainerException
      */
-    private function callBuilder(ElementDefinition $definition, array $stack = [])
+    private function callBuilder(ElementDefinition $definition)
     {
         $reflectionClass = null;
         $reflectionFunc = null;
@@ -419,7 +472,7 @@ class Container implements ContainerInterface
                 return $reflectionClass->newInstance();
             }
             if (!$reflectionFunc->isPublic()) {
-                throw new ContainerException(sprintf('构造方法作用域不可见, 依赖栈: %s', json_encode($stack)));
+                throw new ContainerException(sprintf('构造方法作用域不可见, 依赖栈: %s', json_encode($this->buildStack)));
             }
         } else {
             $reflectionFunc = new ReflectionFunction($definition->getBuilder());
@@ -427,22 +480,8 @@ class Container implements ContainerInterface
 
         $reflectionParams = $reflectionFunc->getParameters();
 
-        $realParams = [];
-        foreach ($reflectionParams as $reflectionParam) {
-            $reflectionParamClass = $reflectionParam->getClass();
-            $paramClassName = isset($reflectionParamClass) ? $reflectionParamClass->getName() : null;
-
-            if (class_exists($paramClassName, true)) {
-                // 找到类型走 typeMap
-                $paramInstance = $this->buildByTypeRecursive($paramClassName, $stack);
-                $realParams[$reflectionParam->getPosition()] = $paramInstance;
-            } else {
-                // 找不到类型走 aliasMap
-                // FIXME 这个判断方法可以用, 但是不严谨
-                $parameterName = $reflectionParam->getName();
-                $realParams[$reflectionParam->getPosition()] = $this->getByAlias($parameterName);
-            }
-        }
+        //构建依赖
+        $realParams = $this->buildDependencies($reflectionParams);
 
         if ($reflectionFunc instanceof ReflectionMethod) {
             $instance = $reflectionClass->newInstanceArgs($realParams);
@@ -452,6 +491,62 @@ class Container implements ContainerInterface
         }
 
         return $result;
+    }
+
+    /**
+     * 构建依赖
+     * @param $reflectionParams
+     * @return array
+     * @throws ContainerException
+     */
+    private function buildDependencies($reflectionParams){
+        $realParams = [];
+        foreach ($reflectionParams as $reflectionParam) {
+            $reflectionParamClass = $reflectionParam->getClass();
+            $paramClassName = isset($reflectionParamClass) ? $reflectionParamClass->getName() : null;
+
+            $type = false;
+            if($paramClassName){
+                $type = $paramClassName;
+            }else if($this->hasAlias($reflectionParam->getName(),true)){
+                //存在别名
+                $type = $reflectionParam->getName();
+            }
+
+            //存在类或者基础类型别名
+            if($type){
+                try{
+                    $paramInstance = $this->build($type);
+                    $realParams[$reflectionParam->getPosition()] = $paramInstance;
+                }catch (ContainerException $e){
+                    //build失败，判断有默认值
+                    if ($reflectionParam->isOptional()) {
+                        $realParams[$reflectionParam->getPosition()] = $reflectionParam->getDefaultValue();
+                    }
+                    throw $e;
+                }
+            }else{
+                //是否有默认值
+                if ($reflectionParam->isDefaultValueAvailable()) {
+                    $realParams[$reflectionParam->getPosition()] = $reflectionParam->getDefaultValue();
+                }else{
+                    throw new ContainerException(sprintf('构造依赖失败, 依赖栈: %s', json_encode($this->buildStack)));
+                }
+            }
+
+//            if (class_exists($paramClassName, true)) {
+//                // 找到类型走 typeMap
+//                $paramInstance = $this->buildByTypeRecursive($paramClassName, $stack);
+//
+//            } else {
+//                // 找不到类型走 aliasMap
+//                // FIXME 这个判断方法可以用, 但是不严谨
+//                $parameterName = $reflectionParam->getName();
+//                $realParams[$reflectionParam->getPosition()] = $this->getByAlias($parameterName);
+//            }
+
+        }
+        return $realParams;
     }
 
 }

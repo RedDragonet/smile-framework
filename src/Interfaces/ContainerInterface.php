@@ -8,7 +8,6 @@ use Smile\Exceptions\ContainerException;
 
 /**
  * 依赖注入容器的接口
- *
  * @package Smile\DI
  */
 interface ContainerInterface
@@ -54,7 +53,7 @@ interface ContainerInterface
      * 不过一直到类名被getByType访问之前, 都不会被调用
      *
      * @fixme 严格的讲, 这个不应该属于容器的职责, 大家可以考虑一下如何把这部分逻辑剥离出容器的接口
-     *
+     * @fixme 默认允许所有命名空间都可以自动组装
      * @param string $namespace 待注册的命名空间
      * @return void
      * @throws \Smile\Exceptions\ContainerException
